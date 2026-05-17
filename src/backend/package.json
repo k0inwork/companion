@@ -1,0 +1,16 @@
+{
+  "name": "traceback-backend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^5.1.0",
+    "openai": "^4.95.0",
+    "pg": "^8.14.0"
+  }
+}

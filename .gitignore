@@ -1,5 +1,14 @@
-
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db
 .beads-credential-key
+
+# Backend
+.env
+__pycache__/
+*.pyc
+.venv/
+
+# Frontend
+node_modules/
+build/
