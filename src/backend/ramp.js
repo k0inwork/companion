@@ -129,10 +129,18 @@ function getStartRatio(previousRatio, sessionCount) {
 /**
  * Build the full system prompt section for language mixing.
  */
+const LANG_NAMES = {
+  en: 'English', de: 'German', fr: 'French', es: 'Spanish',
+  it: 'Italian', pt: 'Portuguese', lv: 'Latvian', lt: 'Lithuanian',
+  ru: 'Russian',
+};
+
 function buildRampPrompt({ l1, l2, proficiency, rampRatio }) {
   const band = getBand(rampRatio);
+  const l1Name = LANG_NAMES[l1] || l1;
+  const l2Name = LANG_NAMES[l2] || l2;
   return [
-    `LANGUAGES: User speaks ${l1} (strong) and is learning ${l2} (target).`,
+    `LANGUAGES: User speaks ${l1Name} (strong) and is learning ${l2Name} (target).`,
     `Your role: conversational friend, NOT a teacher. Keep it natural.`,
     getMixingInstructions(band, proficiency),
   ].join("\n\n");

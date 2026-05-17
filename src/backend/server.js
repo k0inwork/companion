@@ -4,6 +4,7 @@ const cors = require("cors");
 const db = require("./db");
 const ramp = require("./ramp");
 const llm = require("./llm");
+const endgame = require("./endgame");
 
 const app = express();
 app.use(cors());
@@ -20,7 +21,7 @@ app.get("/health", async (req, res) => {
 
 // Create user profile
 app.post("/user", async (req, res) => {
-  const { id, l1, l2, proficiency } = req.body;
+  const { id, l1, l2, proficiency } = req.body || {};
   if (!id || !l1 || !l2) {
     return res.status(400).json({ error: "id, l1, l2 are required" });
   }
@@ -38,7 +39,7 @@ app.post("/user", async (req, res) => {
 
 // Create session (uses user profile for language settings)
 app.post("/session", async (req, res) => {
-  const { user_id, l1, l2, proficiency, ramp_mode, start_ratio } = req.body;
+  const { user_id, l1, l2, proficiency, ramp_mode, start_ratio } = req.body || {};
   const id = `s-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   try {
@@ -108,7 +109,7 @@ app.get("/session/:id/ramp", async (req, res) => {
 
 // Manually set ramp ratio (for manual mode or override)
 app.patch("/session/:id/ramp", async (req, res) => {
-  const { ratio, mode } = req.body;
+  const { ratio, mode } = req.body || {};
   try {
     const updates = [];
     const values = [];
@@ -144,7 +145,7 @@ app.patch("/session/:id/ramp", async (req, res) => {
 
 // Chat endpoint — main conversation loop
 app.post("/chat", async (req, res) => {
-  const { session_id, message } = req.body;
+  const { session_id, message } = req.body || {};
   if (!session_id || !message) {
     return res.status(400).json({ error: "session_id and message are required" });
   }
@@ -188,10 +189,15 @@ app.post("/chat", async (req, res) => {
     // Call LLM
     let response;
     if (process.env.OPENAI_API_KEY) {
-      response = await llm.chat(systemPrompt, history);
-    } else {
-      // Dev fallback: simple echo with a fake L2 word
-      response = `[dev] No OPENAI_API_KEY set. You said: "${message}". Das ist interesting, tell me more.`;
+      try {
+        response = await llm.chat(systemPrompt, history);
+      } catch (err) {
+        console.error("LLM error:", err.message);
+        response = null;
+      }
+    }
+    if (!response) {
+      response = `[dev] LLM unavailable. You said: "${message}". Tell me more.`;
     }
 
     // Store messages in DB
@@ -227,7 +233,7 @@ app.post("/chat", async (req, res) => {
 
 // Radar capture — store a captured word with full sentence context
 app.post("/radar", async (req, res) => {
-  const { session_id, word, context, media_timestamp } = req.body;
+  const { session_id, word, context, media_timestamp } = req.body || {};
   if (!session_id || !word) {
     return res.status(400).json({ error: "session_id and word are required" });
   }
@@ -268,7 +274,127 @@ app.get("/session/:id/radar", async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 8000;
-app.listen(PORT, () => {
-  console.log(`Traceback backend on :${PORT}`);
+// --- Endgame endpoints ---
+
+// Start endgame for a session
+app.post("/endgame/start", async (req, res) => {
+  const { session_id } = req.body || {};
+  if (!session_id) {
+    return res.status(400).json({ error: "session_id is required" });
+  }
+
+  try {
+    const radarResult = await db.query(
+      "SELECT word, context_text, frequency_count FROM radar_item WHERE session_id = $1 ORDER BY updated_at DESC",
+      [session_id]
+    );
+
+    if (radarResult.rows.length === 0) {
+      return res.status(400).json({ error: "no captured words for this session" });
+    }
+
+    const game = endgame.createGame(session_id, radarResult.rows);
+    const prompt = endgame.buildEndgamePrompt(game);
+
+    // Get first LLM message to kick off the game
+    const openingResponse = await llm.chat(prompt, [
+      { role: "user", content: "let's play! I'm ready." },
+    ]);
+
+    // Parse any markers from the opening
+    const { cleanText, results } = endgame.parseMarkers(openingResponse || "");
+    if (results.length > 0) {
+      endgame.applyResults(game.id, results);
+    }
+    endgame.incrementStep(game.id);
+
+    res.json({
+      endgame_id: game.id,
+      total_words: game.words.length,
+      response: cleanText || "Hey! Ready to see what you remember?",
+      complete: false,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
+
+// Chat within endgame
+app.post("/endgame/chat", async (req, res) => {
+  const { endgame_id, message } = req.body || {};
+  if (!endgame_id || !message) {
+    return res.status(400).json({ error: "endgame_id and message are required" });
+  }
+
+  try {
+    const game = endgame.getGame(endgame_id);
+    if (!game) {
+      return res.status(404).json({ error: "endgame not found" });
+    }
+    if (game.complete) {
+      const summary = endgame.getSummary(endgame_id);
+      return res.json({ response: "Game is already done!", complete: true, summary });
+    }
+
+    game.history.push({ role: "user", content: message });
+    endgame.incrementStep(endgame_id);
+
+    // Rebuild prompt with updated progress
+    const prompt = endgame.buildEndgamePrompt(game);
+
+    let response;
+    try {
+      response = await llm.chat(prompt, game.history);
+    } catch (err) {
+      console.error("Endgame LLM error:", err.message);
+      response = null;
+    }
+
+    if (!response) {
+      response = "Hmm, lost my train of thought. Try again?";
+    }
+
+    // Parse markers and update state
+    const { cleanText, results } = endgame.parseMarkers(response);
+    let updatedGame = game;
+    if (results.length > 0) {
+      updatedGame = endgame.applyResults(endgame_id, results);
+    }
+
+    game.history.push({ role: "assistant", content: response });
+
+    const isComplete = updatedGame.complete;
+    const summary = isComplete ? endgame.getSummary(endgame_id) : null;
+
+    res.json({
+      response: cleanText,
+      complete: isComplete,
+      ...(summary ? { summary } : {}),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get endgame summary
+app.get("/endgame/:id/summary", (req, res) => {
+  const summary = endgame.getSummary(req.params.id);
+  if (!summary) {
+    return res.status(404).json({ error: "endgame not found" });
+  }
+  res.json(summary);
+});
+
+const PORT = process.env.PORT || 8000;
+
+(async () => {
+  try {
+    await db.migrate();
+  } catch (err) {
+    console.error("migration failed:", err.message);
+    process.exit(1);
+  }
+  app.listen(PORT, () => {
+    console.log(`Traceback backend on :${PORT}`);
+  });
+})();
