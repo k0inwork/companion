@@ -38,7 +38,7 @@ export default function RadarPanel({ words, l1 }: Props) {
       .then(r => r.json())
       .then(data => {
         if (data.steps) {
-          translationCache[l2] = data.steps;
+          translationCache[l1] = data.steps;
           setSteps(data.steps);
         }
       })
