@@ -16,21 +16,17 @@ if [ "$BEFORE" = "$AFTER" ]; then
   exit 0
 fi
 
-# Only rebuild frontend if frontend src changed
-if git diff --name-only "$BEFORE" "$AFTER" | grep -q "^src/frontend/"; then
-  echo "$(date) — rebuilding frontend" >> "$LOG"
-  cd src/frontend
-  REACT_APP_API_URL= npx react-scripts build >> "$LOG" 2>&1
-  cd "$COMPANION_DIR"
-fi
+# Rebuild frontend
+echo "$(date) — rebuilding frontend" >> "$LOG"
+cd src/frontend
+REACT_APP_API_URL= npx react-scripts build >> "$LOG" 2>&1
+cd "$COMPANION_DIR"
 
-# Restart backend if backend or frontend changed
-if git diff --name-only "$BEFORE" "$AFTER" | grep -qE "^src/(backend|frontend)/"; then
-  echo "$(date) — restarting backend" >> "$LOG"
-  kill $(lsof -ti:4001) 2>/dev/null || true
-  sleep 1
-  cd "$COMPANION_DIR/src/backend"
-  PORT=4001 nohup node server.js > /tmp/tb.log 2>&1 &
-fi
+# Restart backend
+echo "$(date) — restarting backend" >> "$LOG"
+kill $(lsof -ti:4001) 2>/dev/null || true
+sleep 1
+cd "$COMPANION_DIR/src/backend"
+PORT=4001 nohup node server.js > /tmp/tb.log 2>&1 &
 
 echo "$(date) — deploy done" >> "$LOG"
