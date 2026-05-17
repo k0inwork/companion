@@ -250,7 +250,7 @@ function App() {
       </div>
       <div className="main-area">
         <ChatPane messages={messages} onCaptureWord={handleCapture} />
-        {mode === 'chat' && <RadarPanel words={radarWords} l2={l2} />}
+        {mode === 'chat' && <RadarPanel words={radarWords} l1={l1} />}
         {mode === 'endgame' && endgameSummary && (
           <div className="endgame-summary">
             <div className="radar-header">Results</div>

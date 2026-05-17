@@ -396,7 +396,7 @@ const GUIDE_STEPS = {
 };
 
 app.get("/guide", async (req, res) => {
-  const lang = (req.query.l2 || "en").slice(0, 5);
+  const lang = (req.query.l1 || "en").slice(0, 5);
   if (lang === "en") {
     return res.json({ steps: GUIDE_STEPS });
   }

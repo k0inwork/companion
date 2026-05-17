@@ -15,25 +15,25 @@ const translationCache: Record<string, Record<string, string>> = {};
 
 interface Props {
   words: RadarWord[];
-  l2: string;
+  l1: string;
 }
 
-export default function RadarPanel({ words, l2 }: Props) {
+export default function RadarPanel({ words, l1 }: Props) {
   const hasWords = words.length > 0;
   const [steps, setSteps] = React.useState<Record<string, string>>(
-    translationCache[l2] || DEFAULT_STEPS
+    translationCache[l1] || DEFAULT_STEPS
   );
 
   React.useEffect(() => {
-    if (l2 === 'en') {
+    if (l1 === 'en') {
       setSteps(DEFAULT_STEPS);
       return;
     }
-    if (translationCache[l2]) {
-      setSteps(translationCache[l2]);
+    if (translationCache[l1]) {
+      setSteps(translationCache[l1]);
       return;
     }
-    fetch(`${API}/guide?l2=${l2}`)
+    fetch(`${API}/guide?l1=${l1}`)
       .then(r => r.json())
       .then(data => {
         if (data.steps) {
@@ -42,7 +42,7 @@ export default function RadarPanel({ words, l2 }: Props) {
         }
       })
       .catch(() => {});
-  }, [l2]);
+  }, [l1]);
 
   return (
     <div className="radar-panel">
