@@ -385,6 +385,41 @@ app.get("/endgame/:id/summary", (req, res) => {
   res.json(summary);
 });
 
+// --- GitHub webhook for auto-deploy ---
+const { execSync } = require("child_process");
+
+app.post("/webhook", (req, res) => {
+  const secret = process.env.WEBHOOK_SECRET;
+  if (secret) {
+    const sig = req.headers["x-hub-signature-256"];
+    if (!sig) return res.status(403).json({ error: "missing signature" });
+    const crypto = require("crypto");
+    const expected = "sha256=" + crypto.createHmac("sha256", secret).update(JSON.stringify(req.body)).digest("hex");
+    if (sig !== expected) return res.status(403).json({ error: "invalid signature" });
+  }
+
+  const ref = req.body?.ref;
+  if (!ref || !ref.endsWith("/main")) {
+    return res.json({ status: "ignored", ref });
+  }
+
+  res.json({ status: "deploying" });
+
+  // Run deploy async
+  const deploy = () => {
+    try {
+      execSync("bash scripts/deploy.sh", {
+        cwd: process.env.COMPANION_DIR || "/root/companion",
+        stdio: "inherit",
+        timeout: 180000,
+      });
+    } catch (err) {
+      console.error("deploy failed:", err.message);
+    }
+  };
+  setTimeout(deploy, 100);
+});
+
 // --- Guide translation (cached) ---
 
 const GUIDE_STEPS = {
