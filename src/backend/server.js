@@ -388,8 +388,13 @@ app.get("/endgame/:id/summary", (req, res) => {
 // Serve frontend static files (built React app)
 const path = require("path");
 app.use(express.static(path.join(__dirname, "../frontend/build")));
-app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "../frontend/build/index.html"));
+// SPA fallback — must be last route (Express 5 wildcard syntax)
+app.use((req, res, next) => {
+  if (req.method === "GET" && !req.path.startsWith("/session") && !req.path.startsWith("/chat") && !req.path.startsWith("/radar") && !req.path.startsWith("/endgame") && !req.path.startsWith("/user") && !req.path.startsWith("/health")) {
+    res.sendFile(path.join(__dirname, "../frontend/build/index.html"));
+  } else {
+    next();
+  }
 });
 
 const PORT = process.env.PORT || 8000;
