@@ -11,7 +11,6 @@ const DEFAULT_STEPS: Record<string, string> = {
   step5: "The AI will quiz you on your words — a friendly recall game, not a test",
 };
 
-// Simple in-memory cache across renders
 const translationCache: Record<string, Record<string, string>> = {};
 
 interface Props {
@@ -21,15 +20,19 @@ interface Props {
 
 export default function RadarPanel({ words, l2 }: Props) {
   const hasWords = words.length > 0;
-  const [steps, setSteps] = React.useState<Record<string, string>>(translationCache[l2] || DEFAULT_STEPS);
-  const [loading, setLoading] = React.useState(false);
+  const [steps, setSteps] = React.useState<Record<string, string>>(
+    translationCache[l2] || DEFAULT_STEPS
+  );
 
   React.useEffect(() => {
-    if (l2 === 'en' || translationCache[l2]) {
-      setSteps(translationCache[l2] || DEFAULT_STEPS);
+    if (l2 === 'en') {
+      setSteps(DEFAULT_STEPS);
       return;
     }
-    setLoading(true);
+    if (translationCache[l2]) {
+      setSteps(translationCache[l2]);
+      return;
+    }
     fetch(`${API}/guide?l2=${l2}`)
       .then(r => r.json())
       .then(data => {
@@ -38,8 +41,7 @@ export default function RadarPanel({ words, l2 }: Props) {
           setSteps(data.steps);
         }
       })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+      .catch(() => {});
   }, [l2]);
 
   return (
@@ -47,11 +49,11 @@ export default function RadarPanel({ words, l2 }: Props) {
       <div className="radar-header">radar</div>
       {!hasWords && (
         <div className="radar-guide">
-          <div className="guide-title">{l2 === 'en' ? 'How it works' : 'How it works'}</div>
+          <div className="guide-title">How it works</div>
           <ol className="guide-steps">
             {['step1','step2','step3','step4','step5'].map(key => (
               <li key={key}>
-                {loading ? '...' : steps[key] || DEFAULT_STEPS[key]}
+                {steps[key] || DEFAULT_STEPS[key]}
               </li>
             ))}
           </ol>
