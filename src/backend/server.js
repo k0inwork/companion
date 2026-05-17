@@ -385,6 +385,60 @@ app.get("/endgame/:id/summary", (req, res) => {
   res.json(summary);
 });
 
+// --- Guide translation (cached) ---
+
+const GUIDE_STEPS = {
+  step1: "Chat with the AI — it will mix in words from the language you're learning",
+  step2: "Ctrl+Click any word that catches your eye to capture it",
+  step3: "Captured words appear here with the sentence where you found them",
+  step4: "When you've captured enough, hit Endgame in the top bar",
+  step5: "The AI will quiz you on your words — a friendly recall game, not a test",
+};
+
+app.get("/guide", async (req, res) => {
+  const lang = (req.query.l2 || "en").slice(0, 5);
+  if (lang === "en") {
+    return res.json({ steps: GUIDE_STEPS });
+  }
+
+  try {
+    // Check cache
+    const cached = await db.query(
+      "SELECT step_key, text FROM guide_translation WHERE lang = $1",
+      [lang]
+    );
+    if (cached.rows.length === Object.keys(GUIDE_STEPS).length) {
+      const steps = {};
+      for (const row of cached.rows) steps[row.step_key] = row.text;
+      return res.json({ steps });
+    }
+
+    // Translate via LLM
+    const prompt = `Translate these 5 UI instruction steps into ${lang}. Return ONLY a JSON object with keys step1-step5 and translated string values. Keep it natural and concise.\n\n${JSON.stringify(GUIDE_STEPS)}`;
+    let translation;
+    try {
+      const raw = await llm.chat("You translate UI text. Output valid JSON only.", [
+        { role: "user", content: prompt },
+      ]);
+      translation = JSON.parse(raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim());
+    } catch {
+      return res.json({ steps: GUIDE_STEPS });
+    }
+
+    // Cache in DB
+    for (const [key, text] of Object.entries(translation)) {
+      await db.query(
+        "INSERT INTO guide_translation (lang, step_key, text) VALUES ($1, $2, $3) ON CONFLICT (lang, step_key) DO UPDATE SET text = EXCLUDED.text, updated_at = NOW()",
+        [lang, key, text]
+      );
+    }
+
+    res.json({ steps: translation });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Serve frontend static files (built React app)
 const path = require("path");
 app.use(express.static(path.join(__dirname, "../frontend/build")));
