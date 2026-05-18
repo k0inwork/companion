@@ -9,7 +9,6 @@ const DEFAULT_STEPS: Record<string, string> = {
   step3: "Captured words appear here with the sentence where you found them",
   step4: "When you've captured enough, hit Endgame in the top bar",
   step5: "The AI will quiz you on your words — a friendly recall game, not a test",
-  step6: "Review your results and start a new session to keep learning",
 };
 
 const translationCache: Record<string, Record<string, string>> = {};
@@ -55,7 +54,7 @@ export default function RadarPanel({ words, l1 }: Props) {
         <div className="radar-guide">
           <div className="guide-title">How it works</div>
           <ol className="guide-steps">
-            {['step1','step2','step3','step4','step5','step6'].map(key => (
+            {['step1','step2','step3','step4','step5'].map(key => (
               <li key={key}>
                 {steps[key] || DEFAULT_STEPS[key]}
               </li>

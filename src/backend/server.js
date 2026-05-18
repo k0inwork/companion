@@ -496,7 +496,6 @@ const GUIDE_STEPS = {
   step3: "Captured words appear here with the sentence where you found them",
   step4: "When you've captured enough, hit Endgame in the top bar",
   step5: "The AI will quiz you on your words — a friendly recall game, not a test",
-  step6: "Review your results and start a new session to keep learning",
 };
 
 app.get("/api/guide", async (req, res) => {
