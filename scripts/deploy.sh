@@ -3,6 +3,7 @@ set -e
 
 COMPANION_DIR="$HOME/companion"
 LOGDIR="/tmp/traceback-deploy"
+mkdir -p "$LOGDIR"
 
 cd "$COMPANION_DIR"
 
