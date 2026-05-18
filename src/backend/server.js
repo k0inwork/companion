@@ -386,7 +386,7 @@ app.get("/endgame/:id/summary", (req, res) => {
 });
 
 // --- GitHub webhook for auto-deploy ---
-const { execSync } = require("child_process");
+const { spawn } = require("child_process");
 
 app.post("/webhook", (req, res) => {
   const secret = process.env.WEBHOOK_SECRET;
@@ -406,18 +406,13 @@ app.post("/webhook", (req, res) => {
   res.json({ status: "deploying" });
 
   // Run deploy async
-  const deploy = () => {
-    try {
-      execSync("bash scripts/deploy.sh", {
-        cwd: process.env.COMPANION_DIR || "/root/companion",
-        stdio: "inherit",
-        timeout: 180000,
-      });
-    } catch (err) {
-      console.error("deploy failed:", err.message);
-    }
-  };
-  setTimeout(deploy, 100);
+  const deploy = spawn("bash", ["scripts/deploy.sh"], {
+    cwd: process.env.COMPANION_DIR || "/root/companion",
+    env: { ...process.env },
+    detached: true,
+    stdio: "ignore",
+  });
+  deploy.unref();
 });
 
 // --- Deploy logs ---
