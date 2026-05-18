@@ -13,9 +13,8 @@ const app = express();
 const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:3001,http://localhost:4001").split(",").map(s => s.trim());
 app.use(cors({
   origin(origin, callback) {
-    // Allow non-browser requests (no origin header)
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-    callback(new Error("CORS not allowed"));
+    callback(null, false);
   },
 }));
 app.use(express.json());
