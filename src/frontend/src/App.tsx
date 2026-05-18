@@ -5,7 +5,7 @@ import InputLine from './components/InputLine';
 import { Message, RadarWord } from './types';
 import './App.css';
 
-const API = process.env.REACT_APP_API_URL || '';
+const API = process.env.REACT_APP_API_URL || '/api';
 
 const LANGUAGES: Record<string, string> = {
   en: 'English',
@@ -29,12 +29,35 @@ function App() {
   const [endgameId, setEndgameId] = React.useState<string | null>(null);
   const [endgameComplete, setEndgameComplete] = React.useState(false);
   const [endgameSummary, setEndgameSummary] = React.useState<any>(null);
+  const [authToken, setAuthToken] = React.useState<string | null>(() => localStorage.getItem('traceback_token'));
+
+  // Authenticated fetch helper
+  const authFetch = React.useCallback((url: string, opts: RequestInit = {}) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json', ...(opts.headers as Record<string, string> || {}) };
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    return fetch(url, { ...opts, headers });
+  }, [authToken]);
+
+  // Get or issue a token on mount
+  React.useEffect(() => {
+    if (authToken) return;
+    fetch(`${API}/auth/token`, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.token) {
+          localStorage.setItem('traceback_token', data.token);
+          setAuthToken(data.token);
+        }
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const startSession = React.useCallback((newL1: string, newL2: string) => {
+    if (!authToken) return;
     setMessages([]);
     setRadarWords([]);
     setSessionId(null);
-    fetch(`${API}/session`, {
+    authFetch(`${API}/session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ l1: newL1, l2: newL2 }),
@@ -44,10 +67,10 @@ function App() {
       .catch(() => setSessionId('local-dev'));
   }, []);
 
-  // Initialize session on mount
+  // Initialize session once token is ready
   React.useEffect(() => {
-    startSession(l1, l2);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (authToken) startSession(l1, l2);
+  }, [authToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleLangChange = (newL1: string, newL2: string) => {
     setL1(newL1);
@@ -73,9 +96,8 @@ function App() {
         : { session_id: sessionId, message: text };
 
     try {
-      const res = await fetch(endpoint, {
+      const res = await authFetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
       const data = await res.json();
@@ -114,9 +136,8 @@ function App() {
     setEndgameSummary(null);
 
     try {
-      const res = await fetch(`${API}/endgame/start`, {
+      const res = await authFetch(`${API}/endgame/start`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId }),
       });
       const data = await res.json();
@@ -201,9 +222,8 @@ function App() {
     });
 
     // Send full sentence to backend
-    fetch(`${API}/radar`, {
+    authFetch(`${API}/radar`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_id: sessionId,
         word,

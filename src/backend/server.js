@@ -1,29 +1,104 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const rateLimit = require("express-rate-limit");
 const db = require("./db");
 const ramp = require("./ramp");
 const llm = require("./llm");
 const endgame = require("./endgame");
 
 const app = express();
-app.use(cors());
+
+// #5 — Lock down CORS to known origins
+const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:3001,http://localhost:4001").split(",").map(s => s.trim());
+app.use(cors({
+  origin(origin, callback) {
+    // Allow non-browser requests (no origin header)
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error("CORS not allowed"));
+  },
+}));
 app.use(express.json());
 
-app.get("/health", async (req, res) => {
+// #9 — Rate limiting on LLM-calling endpoints
+const chatLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: { error: "Too many requests, slow down." },
+});
+
+// #4 — Token auth
+const crypto = require("crypto");
+
+function generateToken() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
+// Auth middleware — required on all /api routes except /api/auth/token and /api/health
+async function requireToken(req, res, next) {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Missing or invalid token" });
+  }
+
+  const token = auth.slice(7);
+  try {
+    const result = await db.query("SELECT * FROM session_token WHERE token = $1", [token]);
+    if (result.rows.length === 0) {
+      return res.status(401).json({ error: "Invalid token" });
+    }
+    // Update last_used timestamp
+    await db.query("UPDATE session_token SET last_used = NOW() WHERE token = $1", [token]);
+    req.token = result.rows[0];
+    next();
+  } catch (err) {
+    console.error("token lookup error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+}
+
+// Issue a new session token
+app.post("/api/auth/token", async (req, res) => {
+  try {
+    const token = generateToken();
+    await db.query("INSERT INTO session_token (token) VALUES ($1)", [token]);
+    res.json({ token });
+  } catch (err) {
+    console.error("token create error:", err);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// Apply auth middleware to all /api routes except token issuance and health
+app.use("/api", (req, res, next) => {
+  if (req.path === "/auth/token" || req.path === "/health") return next();
+  requireToken(req, res, next);
+});
+
+// --- API routes (all prefixed with /api — #11) ---
+
+// Health check
+app.get("/api/health", async (req, res) => {
   try {
     await db.query("SELECT 1");
     res.json({ status: "ok" });
   } catch (err) {
-    res.status(500).json({ status: "error", message: err.message });
+    console.error("health error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
 // Create user profile
-app.post("/user", async (req, res) => {
+app.post("/api/user", async (req, res) => {
   const { id, l1, l2, proficiency } = req.body || {};
   if (!id || !l1 || !l2) {
     return res.status(400).json({ error: "id, l1, l2 are required" });
+  }
+  if (typeof id !== "string" || id.length > 128) {
+    return res.status(400).json({ error: "invalid id" });
+  }
+  if (typeof l1 !== "string" || typeof l2 !== "string" || l1.length > 10 || l2.length > 10) {
+    return res.status(400).json({ error: "invalid language codes" });
   }
   const prof = ramp.PROFICIENCY_LEVELS.includes(proficiency) ? proficiency : "novice";
   try {
@@ -33,12 +108,13 @@ app.post("/user", async (req, res) => {
     );
     res.json({ id, l1, l2, proficiency: prof });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("user create error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Create session (uses user profile for language settings)
-app.post("/session", async (req, res) => {
+// Create session
+app.post("/api/session", async (req, res) => {
   const { user_id, l1, l2, proficiency, ramp_mode, start_ratio } = req.body || {};
   const id = `s-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -46,7 +122,6 @@ app.post("/session", async (req, res) => {
     let sessionL1 = l1 || "en";
     let sessionL2 = l2 || "de";
 
-    // If user_id provided, fetch profile defaults
     if (user_id) {
       const result = await db.query("SELECT * FROM user_profile WHERE id = $1", [user_id]);
       if (result.rows.length > 0) {
@@ -56,7 +131,6 @@ app.post("/session", async (req, res) => {
       }
     }
 
-    // Calculate start ratio based on previous sessions
     let ratio;
     if (start_ratio != null) {
       ratio = start_ratio;
@@ -83,12 +157,13 @@ app.post("/session", async (req, res) => {
     const band = ramp.getBand(ratio);
     res.json({ id, l1: sessionL1, l2: sessionL2, ramp_ratio: ratio, band, ramp_mode: mode });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("session create error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Get current ramp state for a session
-app.get("/session/:id/ramp", async (req, res) => {
+// Get ramp state
+app.get("/api/session/:id/ramp", async (req, res) => {
   try {
     const result = await db.query("SELECT * FROM session WHERE id = $1", [req.params.id]);
     if (result.rows.length === 0) {
@@ -103,12 +178,13 @@ app.get("/session/:id/ramp", async (req, res) => {
       ramp_mode: session.ramp_mode,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("ramp get error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Manually set ramp ratio (for manual mode or override)
-app.patch("/session/:id/ramp", async (req, res) => {
+// Manually set ramp ratio
+app.patch("/api/session/:id/ramp", async (req, res) => {
   const { ratio, mode } = req.body || {};
   try {
     const updates = [];
@@ -139,33 +215,34 @@ app.patch("/session/:id/ramp", async (req, res) => {
       ramp_mode: session.ramp_mode,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("ramp update error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Chat endpoint — main conversation loop
-app.post("/chat", async (req, res) => {
+// Chat — main conversation loop (#9 rate limited, #10 fixed double-compute)
+app.post("/api/chat", chatLimiter, async (req, res) => {
   const { session_id, message } = req.body || {};
   if (!session_id || !message) {
     return res.status(400).json({ error: "session_id and message are required" });
   }
+  if (typeof message !== "string" || message.length > 5000) {
+    return res.status(400).json({ error: "message must be a string under 5000 chars" });
+  }
 
   try {
-    // Fetch session
     const sessionResult = await db.query("SELECT * FROM session WHERE id = $1", [session_id]);
     if (sessionResult.rows.length === 0) {
       return res.status(404).json({ error: "session not found" });
     }
     const session = sessionResult.rows[0];
 
-    // Fetch user proficiency
     let proficiency = "novice";
     if (session.user_id) {
       const userResult = await db.query("SELECT proficiency FROM user_profile WHERE id = $1", [session.user_id]);
       proficiency = userResult.rows[0]?.proficiency || "novice";
     }
 
-    // Build system prompt from ramp state
     const systemPrompt = ramp.buildRampPrompt({
       l1: session.l1,
       l2: session.l2,
@@ -173,7 +250,6 @@ app.post("/chat", async (req, res) => {
       rampRatio: session.ramp_ratio,
     });
 
-    // Fetch recent message history (last 20 messages for context)
     const historyResult = await db.query(
       "SELECT role, content FROM message WHERE session_id = $1 ORDER BY timestamp DESC LIMIT 20",
       [session_id]
@@ -183,10 +259,8 @@ app.post("/chat", async (req, res) => {
       content: m.content,
     }));
 
-    // Add user message to history
     history.push({ role: "user", content: message });
 
-    // Call LLM
     let response;
     if (process.env.OPENAI_API_KEY) {
       try {
@@ -200,7 +274,6 @@ app.post("/chat", async (req, res) => {
       response = `[dev] LLM unavailable. You said: "${message}". Tell me more.`;
     }
 
-    // Store messages in DB
     await db.query(
       "INSERT INTO message (session_id, role, content) VALUES ($1, $2, $3)",
       [session_id, "user", message]
@@ -210,36 +283,36 @@ app.post("/chat", async (req, res) => {
       [session_id, "assistant", response]
     );
 
-    // Auto-adjust ramp ratio based on user message
+    // #10 — compute new ratio once, reuse for both DB update and response
+    const newRatio = session.ramp_mode === "auto"
+      ? ramp.applyDelta(session.ramp_ratio, ramp.detectSignal(message, session.l2))
+      : session.ramp_ratio;
+
     if (session.ramp_mode === "auto") {
-      const delta = ramp.detectSignal(message, session.l2);
-      const newRatio = ramp.applyDelta(session.ramp_ratio, delta);
       await db.query(
         "UPDATE session SET ramp_ratio = $1 WHERE id = $2",
         [newRatio, session_id]
       );
     }
 
-    res.json({
-      response,
-      ramp_ratio: session.ramp_mode === "auto"
-        ? ramp.applyDelta(session.ramp_ratio, ramp.detectSignal(message, session.l2))
-        : session.ramp_ratio,
-    });
+    res.json({ response, ramp_ratio: newRatio });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("chat error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Radar capture — store a captured word with full sentence context
-app.post("/radar", async (req, res) => {
+// Radar capture
+app.post("/api/radar", async (req, res) => {
   const { session_id, word, context, media_timestamp } = req.body || {};
   if (!session_id || !word) {
     return res.status(400).json({ error: "session_id and word are required" });
   }
+  if (typeof word !== "string" || word.length > 500) {
+    return res.status(400).json({ error: "invalid word" });
+  }
 
   try {
-    // Upsert: if word exists in session, increment count and update context
     const result = await db.query(
       `INSERT INTO radar_item (session_id, word, context_text, media_timestamp, ramp_ratio)
        VALUES ($1, $2, $3, $4, (SELECT ramp_ratio FROM session WHERE id = $1))
@@ -257,12 +330,13 @@ app.post("/radar", async (req, res) => {
       context: result.rows[0].context_text,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("radar error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Get all radar captures for a session
-app.get("/session/:id/radar", async (req, res) => {
+// Get radar captures
+app.get("/api/session/:id/radar", async (req, res) => {
   try {
     const result = await db.query(
       "SELECT word, frequency_count, context_text, ramp_ratio, created_at, updated_at FROM radar_item WHERE session_id = $1 ORDER BY updated_at DESC",
@@ -270,14 +344,14 @@ app.get("/session/:id/radar", async (req, res) => {
     );
     res.json({ words: result.rows });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("radar list error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
 // --- Endgame endpoints ---
 
-// Start endgame for a session
-app.post("/endgame/start", async (req, res) => {
+app.post("/api/endgame/start", async (req, res) => {
   const { session_id } = req.body || {};
   if (!session_id) {
     return res.status(400).json({ error: "session_id is required" });
@@ -296,12 +370,10 @@ app.post("/endgame/start", async (req, res) => {
     const game = endgame.createGame(session_id, radarResult.rows);
     const prompt = endgame.buildEndgamePrompt(game);
 
-    // Get first LLM message to kick off the game
     const openingResponse = await llm.chat(prompt, [
       { role: "user", content: "let's play! I'm ready." },
     ]);
 
-    // Parse any markers from the opening
     const { cleanText, results } = endgame.parseMarkers(openingResponse || "");
     if (results.length > 0) {
       endgame.applyResults(game.id, results);
@@ -315,12 +387,12 @@ app.post("/endgame/start", async (req, res) => {
       complete: false,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("endgame start error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Chat within endgame
-app.post("/endgame/chat", async (req, res) => {
+app.post("/api/endgame/chat", chatLimiter, async (req, res) => {
   const { endgame_id, message } = req.body || {};
   if (!endgame_id || !message) {
     return res.status(400).json({ error: "endgame_id and message are required" });
@@ -339,7 +411,6 @@ app.post("/endgame/chat", async (req, res) => {
     game.history.push({ role: "user", content: message });
     endgame.incrementStep(endgame_id);
 
-    // Rebuild prompt with updated progress
     const prompt = endgame.buildEndgamePrompt(game);
 
     let response;
@@ -354,7 +425,6 @@ app.post("/endgame/chat", async (req, res) => {
       response = "Hmm, lost my train of thought. Try again?";
     }
 
-    // Parse markers and update state
     const { cleanText, results } = endgame.parseMarkers(response);
     let updatedGame = game;
     if (results.length > 0) {
@@ -372,12 +442,12 @@ app.post("/endgame/chat", async (req, res) => {
       ...(summary ? { summary } : {}),
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("endgame chat error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
-// Get endgame summary
-app.get("/endgame/:id/summary", (req, res) => {
+app.get("/api/endgame/:id/summary", (req, res) => {
   const summary = endgame.getSummary(req.params.id);
   if (!summary) {
     return res.status(404).json({ error: "endgame not found" });
@@ -389,14 +459,19 @@ app.get("/endgame/:id/summary", (req, res) => {
 const { exec } = require("child_process");
 
 app.post("/webhook", (req, res) => {
+  // #2 — webhook auth is now mandatory
   const secret = process.env.WEBHOOK_SECRET;
-  if (secret) {
-    const sig = req.headers["x-hub-signature-256"];
-    if (!sig) return res.status(403).json({ error: "missing signature" });
-    const crypto = require("crypto");
-    const expected = "sha256=" + crypto.createHmac("sha256", secret).update(JSON.stringify(req.body)).digest("hex");
-    if (sig !== expected) return res.status(403).json({ error: "invalid signature" });
+  if (!secret) {
+    console.error("WEBHOOK_SECRET is not set — rejecting webhook request");
+    return res.status(500).json({ error: "Webhook not configured" });
   }
+
+  const sig = req.headers["x-hub-signature-256"];
+  if (!sig) return res.status(403).json({ error: "missing signature" });
+
+  const crypto = require("crypto");
+  const expected = "sha256=" + crypto.createHmac("sha256", secret).update(JSON.stringify(req.body)).digest("hex");
+  if (sig !== expected) return res.status(403).json({ error: "invalid signature" });
 
   const ref = req.body?.ref;
   if (!ref || !ref.endsWith("/main")) {
@@ -411,28 +486,7 @@ app.post("/webhook", (req, res) => {
   });
 });
 
-// --- Deploy logs ---
-const fs = require("fs");
-const LOGDIR = "/tmp/traceback-deploy";
-
-app.get("/deploy/logs", (req, res) => {
-  try {
-    const files = fs.readdirSync(LOGDIR).filter(f => f.endsWith(".log")).sort().reverse();
-    res.json({ logs: files });
-  } catch {
-    res.json({ logs: [] });
-  }
-});
-
-app.get("/deploy/logs/:name", (req, res) => {
-  const name = req.params.name.replace(/[^a-zA-Z0-9._-]/g, "");
-  const fp = `${LOGDIR}/${name}`;
-  try {
-    res.type("text/plain").send(fs.readFileSync(fp, "utf8"));
-  } catch {
-    res.status(404).json({ error: "log not found" });
-  }
-});
+// #3 — Deploy log endpoints removed (were unauthenticated)
 
 // --- Guide translation (cached) ---
 
@@ -445,14 +499,13 @@ const GUIDE_STEPS = {
   step6: "Review your results and start a new session to keep learning",
 };
 
-app.get("/guide", async (req, res) => {
+app.get("/api/guide", async (req, res) => {
   const lang = (req.query.l1 || "en").slice(0, 5);
   if (lang === "en") {
     return res.json({ steps: GUIDE_STEPS });
   }
 
   try {
-    // Check cache
     const cached = await db.query(
       "SELECT step_key, text FROM guide_translation WHERE lang = $1",
       [lang]
@@ -463,8 +516,8 @@ app.get("/guide", async (req, res) => {
       return res.json({ steps });
     }
 
-    // Translate via LLM
-    const prompt = `Translate these 5 UI instruction steps into ${lang}. Return ONLY a JSON object with keys step1-step5 and translated string values. Keep it natural and concise.\n\n${JSON.stringify(GUIDE_STEPS)}`;
+    // #13 — use dynamic step count instead of hardcoded "5"
+    const prompt = `Translate these ${Object.keys(GUIDE_STEPS).length} UI instruction steps into ${lang}. Return ONLY a JSON object with keys step1-step${Object.keys(GUIDE_STEPS).length} and translated string values. Keep it natural and concise.\n\n${JSON.stringify(GUIDE_STEPS)}`;
     let translation;
     try {
       const raw = await llm.chat("You translate UI text. Output valid JSON only.", [
@@ -475,7 +528,6 @@ app.get("/guide", async (req, res) => {
       return res.json({ steps: GUIDE_STEPS });
     }
 
-    // Cache in DB
     for (const [key, text] of Object.entries(translation)) {
       await db.query(
         "INSERT INTO guide_translation (lang, step_key, text) VALUES ($1, $2, $3) ON CONFLICT (lang, step_key) DO UPDATE SET text = EXCLUDED.text, updated_at = NOW()",
@@ -485,16 +537,18 @@ app.get("/guide", async (req, res) => {
 
     res.json({ steps: translation });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("guide error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 
 // Serve frontend static files (built React app)
 const path = require("path");
 app.use(express.static(path.join(__dirname, "../frontend/build")));
-// SPA fallback — must be last route (Express 5 wildcard syntax)
+
+// #11 — SPA fallback: exclude /api/ and /webhook instead of listing every route
 app.use((req, res, next) => {
-  if (req.method === "GET" && !req.path.startsWith("/session") && !req.path.startsWith("/chat") && !req.path.startsWith("/radar") && !req.path.startsWith("/endgame") && !req.path.startsWith("/user") && !req.path.startsWith("/health") && !req.path.startsWith("/deploy") && !req.path.startsWith("/webhook")) {
+  if (req.method === "GET" && !req.path.startsWith("/api/") && !req.path.startsWith("/webhook")) {
     res.sendFile(path.join(__dirname, "../frontend/build/index.html"));
   } else {
     next();

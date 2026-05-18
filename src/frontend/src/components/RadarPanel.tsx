@@ -1,7 +1,7 @@
 import React from 'react';
 import { RadarWord } from '../types';
 
-const API = process.env.REACT_APP_API_URL || '';
+const API = process.env.REACT_APP_API_URL || '/api';
 
 const DEFAULT_STEPS: Record<string, string> = {
   step1: "Chat with the AI — it will mix in words from the language you're learning",
@@ -34,7 +34,10 @@ export default function RadarPanel({ words, l1 }: Props) {
       setSteps(translationCache[l1]);
       return;
     }
-    fetch(`${API}/guide?l1=${l1}`)
+    const token = localStorage.getItem('traceback_token');
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    fetch(`${API}/guide?l1=${l1}`, { headers })
       .then(r => r.json())
       .then(data => {
         if (data.steps) {

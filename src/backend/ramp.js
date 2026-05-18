@@ -35,7 +35,7 @@ function getMixingInstructions(band, proficiency) {
   const bandDescriptions = {
     A: `Respond in L1 with 1-2 L2 words per sentence. Each L2 word MUST be guessable from the surrounding L1 context. On first use of an L2 word, add a brief L1 gloss (e.g. "that is wirklich — really — frustrating"). On subsequent uses, no gloss needed.`,
     B: `Respond mostly in L1 but include L2 phrases or short clauses. Use the pattern: L2 phrase — L1 restatement. Keep it natural, no word salad.`,
-    C: `Mix L2 and L2 evenly. Use the pattern: L2 sentence, then L1 fallback if the meaning is unclear. The user should be reading L2 with L1 safety net.`,
+    C: `Mix L1 and L2 evenly. Use the pattern: L2 sentence, then L1 fallback if the meaning is unclear. The user should be reading L2 with L1 safety net.`,
     D: `Respond mostly in L2. Insert L1 words only when the L2 word is likely unknown. Keep the flow natural.`,
     E: `Respond entirely in L2. Full natural language, no simplification.`,
   };
