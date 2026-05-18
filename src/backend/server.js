@@ -420,6 +420,29 @@ app.post("/webhook", (req, res) => {
   setTimeout(deploy, 100);
 });
 
+// --- Deploy logs ---
+const fs = require("fs");
+const LOGDIR = "/tmp/traceback-deploy";
+
+app.get("/deploy/logs", (req, res) => {
+  try {
+    const files = fs.readdirSync(LOGDIR).filter(f => f.endsWith(".log")).sort().reverse();
+    res.json({ logs: files });
+  } catch {
+    res.json({ logs: [] });
+  }
+});
+
+app.get("/deploy/logs/:name", (req, res) => {
+  const name = req.params.name.replace(/[^a-zA-Z0-9._-]/g, "");
+  const fp = `${LOGDIR}/${name}`;
+  try {
+    res.type("text/plain").send(fs.readFileSync(fp, "utf8"));
+  } catch {
+    res.status(404).json({ error: "log not found" });
+  }
+});
+
 // --- Guide translation (cached) ---
 
 const GUIDE_STEPS = {
