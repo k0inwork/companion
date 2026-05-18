@@ -386,7 +386,7 @@ app.get("/endgame/:id/summary", (req, res) => {
 });
 
 // --- GitHub webhook for auto-deploy ---
-const { spawn } = require("child_process");
+const { exec } = require("child_process");
 
 app.post("/webhook", (req, res) => {
   const secret = process.env.WEBHOOK_SECRET;
@@ -405,15 +405,10 @@ app.post("/webhook", (req, res) => {
 
   res.json({ status: "deploying" });
 
-  // Run deploy async
-  const logStream = require("fs").createWriteStream("/tmp/traceback-deploy/webhook.log", { flags: "a" });
-  const deploy = spawn("bash", ["scripts/deploy.sh"], {
-    cwd: process.env.COMPANION_DIR || "/root/companion",
-    env: { ...process.env, HOME: process.env.HOME || "/root" },
+  const dir = process.env.COMPANION_DIR || "/root/companion";
+  exec("nohup bash scripts/deploy.sh > /tmp/traceback-deploy-hook.log 2>&1 &", { cwd: dir }, (err) => {
+    if (err) console.error("deploy launch error:", err.message);
   });
-  deploy.stdout.pipe(logStream);
-  deploy.stderr.pipe(logStream);
-  deploy.on("error", (err) => console.error("deploy spawn error:", err.message));
 });
 
 // --- Deploy logs ---
