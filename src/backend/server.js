@@ -502,7 +502,7 @@ const path = require("path");
 app.use(express.static(path.join(__dirname, "../frontend/build")));
 // SPA fallback — must be last route (Express 5 wildcard syntax)
 app.use((req, res, next) => {
-  if (req.method === "GET" && !req.path.startsWith("/session") && !req.path.startsWith("/chat") && !req.path.startsWith("/radar") && !req.path.startsWith("/endgame") && !req.path.startsWith("/user") && !req.path.startsWith("/health")) {
+  if (req.method === "GET" && !req.path.startsWith("/session") && !req.path.startsWith("/chat") && !req.path.startsWith("/radar") && !req.path.startsWith("/endgame") && !req.path.startsWith("/user") && !req.path.startsWith("/health") && !req.path.startsWith("/deploy") && !req.path.startsWith("/webhook")) {
     res.sendFile(path.join(__dirname, "../frontend/build/index.html"));
   } else {
     next();
