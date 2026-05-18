@@ -406,13 +406,14 @@ app.post("/webhook", (req, res) => {
   res.json({ status: "deploying" });
 
   // Run deploy async
+  const logStream = require("fs").createWriteStream("/tmp/traceback-deploy/webhook.log", { flags: "a" });
   const deploy = spawn("bash", ["scripts/deploy.sh"], {
     cwd: process.env.COMPANION_DIR || "/root/companion",
-    env: { ...process.env },
-    detached: true,
-    stdio: "ignore",
+    env: { ...process.env, HOME: process.env.HOME || "/root" },
   });
-  deploy.unref();
+  deploy.stdout.pipe(logStream);
+  deploy.stderr.pipe(logStream);
+  deploy.on("error", (err) => console.error("deploy spawn error:", err.message));
 });
 
 // --- Deploy logs ---
